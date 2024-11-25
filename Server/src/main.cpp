@@ -1,8 +1,6 @@
 #include <boost/asio.hpp>
 #include <boost/json.hpp>
 #include <iostream>
-#include <fstream>
-#include <sstream>
 #include <vector>
 
 namespace json = boost::json;
@@ -64,8 +62,8 @@ std::pair<json::array, std::string> processJson(const json::array &jsonArray)
         }
     }
 
-    statistics << "Total replacements: " << replacements << "\n";
-    statistics << "Total deletions: " << deletions << "\n";
+    statistics << "Total number of replacements: " << replacements << "\n";
+    statistics << "Total number of deletions: " << deletions << "\n";
 
     return {processedArray, statistics.str()};
 }
@@ -92,13 +90,18 @@ void handleClient(boost::asio::ip::tcp::socket socket)
             }
         }
 
+        std::cout << "Data from the client read\n";
+
         // Parse the received JSON data
         json::array jsonArray = json::parse(totalData).as_array();
         auto [processedArray, statistics] = processJson(jsonArray);
+        std::cout << "Process received json data\n";
 
         // Send the results back to the client
         std::string result = json::serialize(processedArray) + "\n\n" + statistics;
         boost::asio::write(socket, boost::asio::buffer(result + "<END>"));
+
+        std::cout << "Results send back to the client\nClient disconnected\n";
     }
     catch (const std::exception &e)
     {
@@ -131,7 +134,7 @@ int main()
 
                     // Accept a client connection
                     acceptor.accept(socket);
-                    std::cout << "Client connected.\n";
+                    std::cout << "Client connected\n";
 
                     // Handle the client in a separate thread
                     handleClient(std::move(socket));

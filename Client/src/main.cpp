@@ -140,6 +140,7 @@ void sendFileToServer(const std::string &serverAddress, const uint16_t serverPor
 
         // Send JSON content to the server
         boost::asio::write(socket, boost::asio::buffer(jsonContent + "<END>"));
+        std::cout << "Sending file to the server" << std::endl;
 
         // Receive the processed JSON from the server
         boost::asio::streambuf response;
