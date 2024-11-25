@@ -3,6 +3,65 @@
 #include <boost/random.hpp>
 #include <boost/random/random_device.hpp>
 #include <boost/asio.hpp>
+#include <boost/json.hpp>
+
+namespace json = boost::json;
+
+// Function to convert CSV content to a JSON array
+json::array csvToJson(const std::string &csvContent)
+{
+    json::array jsonArray;
+    std::istringstream csvStream(csvContent);
+    std::string line;
+
+    while (std::getline(csvStream, line))
+    {
+        json::array jsonRow;
+        std::istringstream lineStream(line);
+        std::string cell;
+
+        // Split each line into cells using a comma as the delimiter
+        while (std::getline(lineStream, cell, ','))
+        {
+            jsonRow.push_back(boost::json::value(cell));
+        }
+
+        jsonArray.push_back(jsonRow);
+    }
+
+    return jsonArray;
+}
+
+// Function to convert a JSON array to CSV content
+std::string jsonToCsv(const json::array &jsonArray)
+{
+    std::ostringstream csvContent;
+
+    for (const auto &row : jsonArray)
+    {
+        const auto &jsonRow = row.as_array();
+        for (uint16_t i = 0; i < jsonRow.size(); ++i)
+        {
+            std::string cellValue = std::string(jsonRow[i].as_string());
+
+            // Remove surrounding double quotes
+            if (cellValue.front() == '"' && cellValue.back() == '"')
+            {
+                cellValue = cellValue.substr(1, cellValue.size() - 2); // Delete the first and the last quote
+            }
+
+            csvContent << cellValue;
+
+            if (i < jsonRow.size() - 1)
+            {
+                csvContent << ",";
+            }
+        }
+        csvContent << "\n";
+    }
+
+    return csvContent.str();
+}
 
 // Function for generating a random string with numbers and Latin letters
 std::string generateRandomString(const uint8_t length)
@@ -11,7 +70,6 @@ std::string generateRandomString(const uint8_t length)
     static boost::random::random_device randomDevice;
     static boost::random::mt19937 generator(randomDevice());
     static boost::random::uniform_int_distribution<> distribution(0, characters.size() - 1);
-
     std::string randomString;
 
     for (uint8_t i = 0; i < length; ++i)
@@ -35,6 +93,7 @@ void generateCSV(const std::string &filename)
     const uint8_t columns = 6;
     const uint8_t stringLength = 8;
 
+    // Fill csv file with random data
     for (uint16_t i = 0; i < rows; i++)
     {
         for (uint8_t j = 0; j < columns; j++)
@@ -52,49 +111,74 @@ void generateCSV(const std::string &filename)
     std::cout << "CSV file generated: " << filename << std::endl;
 }
 
-// Function to send a file to the server
+// Function to send json to a server and receive file and statistics from a server
 void sendFileToServer(const std::string &serverAddress, const uint16_t serverPort, const std::string &filename)
 {
     try
     {
         boost::asio::io_service io_service;
 
-        // Create a socket and connect to the server
+        // Connect to the server
         boost::asio::ip::tcp::socket socket(io_service);
         boost::asio::ip::tcp::resolver resolver(io_service);
         boost::asio::connect(socket, resolver.resolve({serverAddress, std::to_string(serverPort)}));
 
-        std::cout << "Connected to server " << serverAddress << ":" << serverPort << std::endl;
-
-        std::ifstream file(filename, std::ios::binary);
+        // Read the CSV file content
+        std::ifstream file(filename);
         if (!file.is_open())
         {
             std::cerr << "Error: Unable to open file " << filename << std::endl;
             return;
         }
 
-        // Read the file content
-        std::string fileContent((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::string csvContent((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
 
-        // Send the file content to the server
-        boost::asio::write(socket, boost::asio::buffer(fileContent));
+        // Convert CSV to JSON format
+        json::array jsonArray = csvToJson(csvContent);
+        std::string jsonContent = json::serialize(jsonArray);
 
-        std::cout << "File sent successfully: " << filename << std::endl;
+        // Send JSON content to the server
+        boost::asio::write(socket, boost::asio::buffer(jsonContent + "<END>"));
 
-        // Receive the processed file content from the server
+        // Receive the processed JSON from the server
         boost::asio::streambuf response;
-        boost::asio::read_until(socket, response, "\0");
+        std::string totalData;
+        boost::system::error_code error;
 
-        std::istream response_stream(&response);
-        std::string processedContent((std::istreambuf_iterator<char>(response_stream)), std::istreambuf_iterator<char>());
+        while (true)
+        {
+            boost::asio::read(socket, response, boost::asio::transfer_at_least(1), error);
+            std::istream stream(&response);
+            std::string data((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+            totalData += data;
 
-        // Save the processed content to a new file
+            if (totalData.find("<END>") != std::string::npos)
+            {
+                totalData.erase(totalData.find("<END>"));
+                break;
+            }
+        }
+
+        // Separate the processed JSON and statistics
+        auto delimiterPos = totalData.find("\n\n");
+        std::string processedJson = totalData.substr(0, delimiterPos);
+        std::string statistics = totalData.substr(delimiterPos + 2);
+
+        // Convert JSON to CSV format
+        json::array processedArray = json::parse(processedJson).as_array();
+        std::string processedCsv = jsonToCsv(processedArray);
+
+        // Save the processed CSV file
         std::string processedFilename = "processed_" + filename;
-        std::ofstream processedFile(processedFilename, std::ios::binary);
-        processedFile << processedContent;
+        std::ofstream processedFile(processedFilename);
+        processedFile << processedCsv;
         processedFile.close();
 
         std::cout << "Processed file saved as: " << processedFilename << std::endl;
+
+        std::cout << "Statistics:\n"
+                  << statistics << std::endl;
     }
     catch (const std::exception &e)
     {
