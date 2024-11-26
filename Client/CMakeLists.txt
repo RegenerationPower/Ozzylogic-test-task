@@ -3,8 +3,8 @@ project(Client)
 
 set(CMAKE_CXX_STANDARD 17)
 
-find_package(Boost REQUIRED COMPONENTS random)
+find_package(Boost REQUIRED COMPONENTS json random)
 
 add_executable(client src/main.cpp)
 
-target_link_libraries(client Boost::random)
+target_link_libraries(client Boost::random Boost::json)
